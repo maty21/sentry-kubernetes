@@ -1,0 +1,675 @@
+---
+# Source: sentry/charts/postgresql/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sentry-postgresql
+  labels:
+    app: sentry-postgresql
+    chart: "postgresql-0.8.3"
+    release: "sentry"
+    heritage: "Tiller"
+type: Opaque
+data:
+  
+  postgres-password: "TVdCWkRxNU1iNA=="
+  
+
+---
+# Source: sentry/charts/redis/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sentry-redis
+  labels:
+    app: sentry-redis
+    chart: "redis-0.10.1"
+    release: "sentry"
+    heritage: "Tiller"
+type: Opaque
+data:
+  redis-password: "cWhkOVBDd2c4eQ=="
+---
+# Source: sentry/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sentry-sentry
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+type: Opaque
+data:
+  
+  sentry-secret: "cHNNOGUxTkNZTnFlM0ZSaGl6b1hnb0p1TTFFcGVodzR5SmlmQzJ2cQ=="
+  
+  smtp-password: ""
+  user-password: "clZIbTlQR0Y0NnFPdjFacg=="
+
+---
+# Source: sentry/charts/postgresql/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentry-postgresql
+  labels:
+    app: sentry-postgresql
+    chart: "postgresql-0.8.3"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+  selector:
+    app: sentry-postgresql
+---
+# Source: sentry/charts/redis/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentry-redis
+  labels:
+    app: sentry-redis
+    chart: "redis-0.10.1"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: redis
+  selector:
+    app: sentry-redis
+
+---
+# Source: sentry/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentry-sentry
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 9000
+    targetPort: 9000
+    protocol: TCP
+    name: sentry
+  selector:
+    app: sentry-sentry
+    role: web
+
+---
+# Source: sentry/charts/postgresql/templates/deployment.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: sentry-postgresql
+  labels:
+    app: sentry-postgresql
+    chart: "postgresql-0.8.3"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  template:
+    metadata:
+      labels:
+        app: sentry-postgresql
+    spec:
+      containers:
+      - name: sentry-postgresql
+        image: "postgres:9.5"
+        imagePullPolicy: ""
+        env:
+        - name: POSTGRES_USER
+          value: "sentry"
+          # Required for pg_isready in the health probes.
+        - name: PGUSER
+          value: "sentry"
+        - name: POSTGRES_DB
+          value: "sentry"
+        - name: POSTGRES_INITDB_ARGS
+          value: ""
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-postgresql
+              key: postgres-password
+        - name: POD_IP
+          valueFrom: { fieldRef: { fieldPath: status.podIP } }
+        ports:
+        - name: postgresql
+          containerPort: 5432
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready --host $POD_IP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready --host $POD_IP
+          initialDelaySeconds: 5
+          timeoutSeconds: 3
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data/pgdata
+          subPath: postgresql-db
+      volumes:
+      - name: data
+        emptyDir: {}
+
+---
+# Source: sentry/charts/redis/templates/deployment.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: sentry-redis
+  labels:
+    app: sentry-redis
+    chart: "redis-0.10.1"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  template:
+    metadata:
+      labels:
+        app: sentry-redis
+    spec:
+      containers:
+      - name: sentry-redis
+        image: "bitnami/redis:3.2.9-r2"
+        imagePullPolicy: "IfNotPresent"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-redis
+              key: redis-password
+        ports:
+        - name: redis
+          containerPort: 6379
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          
+        volumeMounts:
+        - name: redis-data
+          mountPath: /bitnami/redis
+      volumes:
+      - name: redis-data
+        emptyDir: {}
+---
+# Source: sentry/templates/cron-deployment.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: sentry-sentry-cron
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: sentry-sentry
+        release: "sentry"
+        role: cron
+    spec:
+      containers:
+      - name: sentry-cron
+        image: "sentry:8.20"
+        imagePullPolicy: IfNotPresent
+        args: ["run", "cron"]
+        ports:
+        - containerPort: 9000
+        env:
+        - name: SENTRY_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: sentry-secret
+        - name: SENTRY_DB_USER
+          value: "sentry"
+        - name: SENTRY_DB_NAME
+          value: "sentry"
+        - name: SENTRY_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-postgresql
+              key: postgres-password
+        - name: SENTRY_POSTGRES_HOST
+          value: sentry-postgresql
+        - name: SENTRY_POSTGRES_PORT
+          value: "5432"
+        - name: SENTRY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-redis
+              key: redis-password
+        - name: SENTRY_REDIS_HOST
+          value: sentry-redis
+        - name: SENTRY_REDIS_PORT
+          value: "6379"
+        - name: SENTRY_EMAIL_HOST
+          value: "smtp"
+        - name: SENTRY_EMAIL_PORT
+          value: "25"
+        - name: SENTRY_EMAIL_USER
+          value: ""
+        - name: SENTRY_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: smtp-password
+        - name: SENTRY_EMAIL_USE_TLS
+          value: "false"
+        - name: SENTRY_SERVER_EMAIL
+          value: "sentry@sentry.local"
+        resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+            
+
+---
+# Source: sentry/templates/web-deployment.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: sentry-sentry-web
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: sentry-sentry
+        release: "sentry"
+        role: web
+    spec:
+      containers:
+      - name: sentry-web
+        image: "sentry:8.20"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        env:
+        - name: SENTRY_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: sentry-secret
+        - name: SENTRY_DB_USER
+          value: "sentry"
+        - name: SENTRY_DB_NAME
+          value: "sentry"
+        - name: SENTRY_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-postgresql
+              key: postgres-password
+        - name: SENTRY_POSTGRES_HOST
+          value: sentry-postgresql
+        - name: SENTRY_POSTGRES_PORT
+          value: "5432"
+        - name: SENTRY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-redis
+              key: redis-password
+        - name: SENTRY_REDIS_HOST
+          value: sentry-redis
+        - name: SENTRY_REDIS_PORT
+          value: "6379"
+        - name: SENTRY_EMAIL_HOST
+          value: "smtp"
+        - name: SENTRY_EMAIL_PORT
+          value: "25"
+        - name: SENTRY_EMAIL_USER
+          value: ""
+        - name: SENTRY_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: smtp-password
+        - name: SENTRY_EMAIL_USE_TLS
+          value: "false"
+        - name: SENTRY_SERVER_EMAIL
+          value: "sentry@sentry.local"
+        volumeMounts:
+        - mountPath: /var/lib/sentry/files
+          name: sentry-data
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /_health/
+            port: 9000
+            scheme: HTTP
+          initialDelaySeconds: 50
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+        readinessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /_health/
+            port: 9000
+            scheme: HTTP
+          initialDelaySeconds: 50
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 2
+        resources:
+            limits:
+              cpu: 500m
+              memory: 500Mi
+            requests:
+              cpu: 300m
+              memory: 300Mi
+            
+      volumes:
+      - name: sentry-data
+        emptyDir: {}
+      
+
+---
+# Source: sentry/templates/workers-deployment.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: sentry-sentry-worker
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: sentry-sentry
+        release: "sentry"
+        role: worker
+    spec:
+      containers:
+      - name: sentry-workers
+        image: "sentry:8.20"
+        imagePullPolicy: IfNotPresent
+        args: ["run", "worker"]
+        ports:
+        - containerPort: 9000
+        env:
+        - name: SENTRY_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: sentry-secret
+        - name: SENTRY_DB_USER
+          value: "sentry"
+        - name: SENTRY_DB_NAME
+          value: "sentry"
+        - name: SENTRY_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-postgresql
+              key: postgres-password
+        - name: SENTRY_POSTGRES_HOST
+          value: sentry-postgresql
+        - name: SENTRY_POSTGRES_PORT
+          value: "5432"
+        - name: SENTRY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-redis
+              key: redis-password
+        - name: SENTRY_REDIS_HOST
+          value: sentry-redis
+        - name: SENTRY_REDIS_PORT
+          value: "6379"
+        - name: SENTRY_EMAIL_HOST
+          value: "smtp"
+        - name: SENTRY_EMAIL_PORT
+          value: "25"
+        - name: SENTRY_EMAIL_USER
+          value: ""
+        - name: SENTRY_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: smtp-password
+        - name: SENTRY_EMAIL_USE_TLS
+          value: "false"
+        - name: SENTRY_SERVER_EMAIL
+          value: "sentry@sentry.local"
+        resources:
+            limits:
+              cpu: 300m
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+            
+
+---
+# Source: sentry/templates/hooks/db-init.job.yaml
+# https://docs.sentry.io/server/installation/docker/#running-migrations
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "sentry-db-init"
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+  annotations:
+    # This is what defines this resource as a hook. Without this line, the
+    # job is considered part of the release.
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "-5"
+spec:
+  template:
+    metadata:
+      name: "sentry-db-init"
+      labels:
+        app: sentry-sentry
+        release: "sentry"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: db-init-job
+        image: "sentry:8.20"
+        command: ["sentry","upgrade","--noinput"]
+        env:
+        - name: SENTRY_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: sentry-secret
+        - name: SENTRY_DB_USER
+          value: "sentry"
+        - name: SENTRY_DB_NAME
+          value: "sentry"
+        - name: SENTRY_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-postgresql
+              key: postgres-password
+        - name: SENTRY_POSTGRES_HOST
+          value: sentry-postgresql
+        - name: SENTRY_POSTGRES_PORT
+          value: "5432"
+        - name: SENTRY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-redis
+              key: redis-password
+        - name: SENTRY_REDIS_HOST
+          value: sentry-redis
+        - name: SENTRY_REDIS_PORT
+          value: "6379"
+        - name: SENTRY_EMAIL_HOST
+          value: ""
+        - name: SENTRY_EMAIL_PORT
+          value: ""
+        - name: SENTRY_EMAIL_USER
+          value: ""
+        - name: SENTRY_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: smtp-password
+        - name: SENTRY_EMAIL_USE_TLS
+          value: "false"
+        - name: SENTRY_SERVER_EMAIL
+          value: "sentry@sentry.local"
+
+---
+# Source: sentry/templates/hooks/user-create.job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "sentry-user-create"
+  labels:
+    app: sentry-sentry
+    chart: "sentry-0.1.7"
+    release: "sentry"
+    heritage: "Tiller"
+  annotations:
+    # This is what defines this resource as a hook. Without this line, the
+    # job is considered part of the release.
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "5"
+spec:
+  template:
+    metadata:
+      name: "sentry-user-create"
+      labels:
+        app: sentry-sentry
+        release: "sentry"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: user-create-job
+        image: "sentry:8.20"
+        command: ["sentry","createuser","--no-input","--email", "admin@sentry.local", "--superuser","--password","$(SENTRY_USER_PASSWORD)"]
+        env:
+        - name: SENTRY_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: sentry-secret
+        - name: SENTRY_DB_USER
+          value: "sentry"
+        - name: SENTRY_DB_NAME
+          value: "sentry"
+        - name: SENTRY_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-postgresql
+              key: postgres-password
+        - name: SENTRY_POSTGRES_HOST
+          value: sentry-postgresql
+        - name: SENTRY_POSTGRES_PORT
+          value: "5432"
+        - name: SENTRY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-redis
+              key: redis-password
+        - name: SENTRY_REDIS_HOST
+          value: sentry-redis
+        - name: SENTRY_REDIS_PORT
+          value: "6379"
+        - name: SENTRY_EMAIL_HOST
+          value: ""
+        - name: SENTRY_EMAIL_PORT
+          value: ""
+        - name: SENTRY_EMAIL_USER
+          value: ""
+        - name: SENTRY_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: smtp-password
+        - name: SENTRY_USER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentry-sentry
+              key: user-password
+        - name: SENTRY_EMAIL_USE_TLS
+          value: "false"
+        - name: SENTRY_SERVER_EMAIL
+          value: "sentry@sentry.local"
+
+---
+# Source: sentry/charts/postgresql/templates/networkpolicy.yaml
+
+
+---
+# Source: sentry/charts/postgresql/templates/pvc.yaml
+
+---
+# Source: sentry/charts/redis/templates/networkpolicy.yaml
+
+
+---
+# Source: sentry/charts/redis/templates/pvc.yaml
+
+
+---
+# Source: sentry/templates/ingress.yaml
+
+---
+# Source: sentry/templates/pvc.yaml
+
